@@ -2,24 +2,10 @@ library(data.table)
 library(dplyr)
 library(purrr)
 library(stringr)
-
+library(ggplot2)
 library(fidelio)
 
 options(echo =TRUE)
-
-#function to assess knockdown strength
-# knockdownStrength <- function(data, gene){
-#   ID <- data$ID
-#   libSize <-  sum(data$all$count)
-#   geneCounts <- filter(data$all, gene_name == gene) %>%
-#     .$count %>%
-#     sum()
-#   geneCPM <- (geneCounts / libSize ) * 1E6
-#
-#   data$countData <- data.frame(ID, libSize, target = gene, geneCounts, geneCPM, stringsAsFactors = FALSE )
-#   return(data)
-# }
-#
 
 # get intron database
 hg38_introns <- "example/gencode_hg38_all_introns.bed.gz"
@@ -51,18 +37,10 @@ annotated <- files[,1:2] %>%
 # create proportions
 annotated <- purrr::map(annotated, createSimpleProportions)
 
-# check knockdown strength
-annotated <- purrr::map(annotated,  knockdownStrength, gene = rbp )
-
 # create summary tables
 proportion_table <-
   purrr::map( annotated, "proportions") %>%
   bind_rows()
-
-# expression_table <-
-#   purrr::map( annotated,"countData") %>%
-#   bind_rows()
-#
 
 p <- tidyr::gather(proportion_table, "key", "value", -ID) %>%
   tidyr::separate(key, into = c("method", "classification") ) %>%
@@ -74,4 +52,6 @@ p <- tidyr::gather(proportion_table, "key", "value", -ID) %>%
   theme_bw()
 
 ggsave("example/example_plot.png")
+
+readr::write_tsv( proportion_table, "example/example_table.txt" )
 
