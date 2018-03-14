@@ -14,5 +14,5 @@ R CMD INSTALL fidelio
 
 ```
 cd fidelio
-Rscript scripts/
+Rscript scripts/test_functions.R 
 ```
