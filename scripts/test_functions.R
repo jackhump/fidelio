@@ -51,7 +51,7 @@ p <- tidyr::gather(proportion_table, "key", "value", -ID) %>%
   labs(title = "Test plot - U2AF2 or SNRNP70 knockdown") +
   theme_bw()
 
-ggsave("example/example_plot.png")
+ggsave("example/example_plot.pdf")
 
 readr::write_tsv( proportion_table, "example/example_table.txt" )
 
