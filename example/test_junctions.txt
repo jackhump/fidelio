@@ -1,0 +1,5 @@
+file	file_id	condition	cell_type
+example/junctions/SNRNP70_1SJ.out.tab.gz	SNRNP70_KD_1	SNRNP70 HepG2
+example/junctions/SNRNP70_control_1SJ.out.tab.gz SNRNP70_control_1 control HepG2
+example/junctions/U2AF2_1SJ.out.tab.gz U2AF2_KD_1	U2AF2	HepG2
+example/junctions/U2AF2_control_1SJ.out.tab.gz	U2AF2_control_1	control HepG2

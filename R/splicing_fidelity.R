@@ -19,9 +19,9 @@ library(data.table)
 #'
 #' @examples
 prepareIntrons <- function(intronList){
-  introns <- fread(paste( "zcat < ", intronList) , data.table=FALSE)
+  introns <- data.table::fread(paste( "zcat < ", intronList) , data.table=FALSE)
   intron_db <- introns %>%
-    rename(chr = V1,
+    dplyr::rename(chr = V1,
          start = V2,
          end = V3,
          gene = V4,
@@ -31,9 +31,9 @@ prepareIntrons <- function(intronList){
          dot = V8,
          transcript_type = V9,
          transcript_annotation = V10) %>%
-    select( -dot ) %>%
-    mutate( end = end - 1 ) %>% # due to 0-base/1-base shenanigans
-    filter( !duplicated( paste(chr, start, end) ) ) # remove duplicate entries
+    dplyr::select( -dot ) %>%
+    dplyr::mutate( end = end - 1 ) %>% # due to 0-base/1-base shenanigans
+    dplyr::filter( !duplicated( paste(chr, start, end) ) ) # remove duplicate entries
   return(intron_db)
 }
 
@@ -58,7 +58,13 @@ annotateJunctions <- function(file, intron_db, file_id){
     return(NULL)
   }
 
-  junctions <- fread(file, data.table=FALSE) # in Rstudio you need, logical01=FALSE)
+  # check if gzipped
+  if( grepl(".gz$", file) ){
+    junctions <- data.table::fread(paste("zless", file), data.table=FALSE) # in Rstudio you need, logical01=FALSE)
+  }else{
+    junctions <- data.table::fread(file, data.table=FALSE) # in Rstudio you need, logical01=FALSE)
+  }
+
 
   # work out whether a leafcutter junction file or a STAR junction file
   fileType <- "unknown"
@@ -69,7 +75,7 @@ annotateJunctions <- function(file, intron_db, file_id){
     fileType <- "STAR"
 
     sorted <- junctions %>%
-      rename( chr = V1,
+      dplyr::rename( chr = V1,
               start = V2,
               end = V3,
               strand = V4,
@@ -79,19 +85,19 @@ annotateJunctions <- function(file, intron_db, file_id){
               multiCount = V8,
               maxOverhang = V9) %>%
       dplyr::arrange(chr, start) %>%
-      select( chr, start, end, count, strand ) %>%
-      filter(count > 0) %>% # filter out junctions with only multi-mapping reads
-      filter( strand != 0) %>%
-      mutate( start = start - 1,
+      dplyr::select( chr, start, end, count, strand ) %>%
+      dplyr::filter(count > 0) %>% # filter out junctions with only multi-mapping reads
+      dplyr::filter( strand != 0) %>%
+      dplyr::mutate( start = start - 1,
               strand = ifelse( strand == 1, "+", "-" ))
   }
   if(ncol(junctions) == 6){
   fileType <- "leafcutter"
   sorted <- junctions %>%
     dplyr::arrange(V1, V2) %>%
-    mutate( V1 = paste0("chr", V1)) %>%
-    rename( chr = V1, start = V2, end = V3, dot = V4, count = V5, strand = V6) %>%
-    select( chr, start, end, count, strand )
+    dplyr::mutate( V1 = paste0("chr", V1)) %>%
+    dplyr::rename( chr = V1, start = V2, end = V3, dot = V4, count = V5, strand = V6) %>%
+    dplyr::select( chr, start, end, count, strand )
   }
 
   if( fileType == "unknown"){
@@ -101,18 +107,18 @@ annotateJunctions <- function(file, intron_db, file_id){
 
   # find exact matches of both splice sites
   intersect_both <- sorted %>%
-    left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
-    select( chr, start,end, strand, count, transcript )
+    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
+    dplyr::select( chr, start,end, strand, count, transcript )
 
   # get just annotated junctions out
   annotated <- intersect_both %>%
-    filter( !is.na(transcript) ) %>%
-    mutate( type = "annotated") %>%
-    select( chr, start, end, strand, count, type)
+    dplyr::filter( !is.na(transcript) ) %>%
+    dplyr::mutate( type = "annotated") %>%
+    dplyr::select( chr, start, end, strand, count, type)
 
   # by definition any junction that can't be found in the GENCODE intron table is novel
   novel_junctions <- filter(intersect_both, is.na(transcript)) %>%
-    select( chr, start, end, strand, count)
+    dplyr::select( chr, start, end, strand, count)
 
 
   # split novel junctions into different types
@@ -124,10 +130,10 @@ annotateJunctions <- function(file, intron_db, file_id){
   # so only keep novel junctions where start and end match separately
 
   skiptic <- novel_junctions %>%
-    semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
-    semi_join( intron_db, by = c( "chr", "end", "strand" ) ) %>%
-    arrange( chr,start )  %>%
-    mutate( type = "skiptic")
+    dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
+    dplyr::semi_join( intron_db, by = c( "chr", "end", "strand" ) ) %>%
+    dplyr::arrange( chr,start )  %>%
+    dplyr::mutate( type = "skiptic")
 
   # for singly annotated junctions
   # I can find left and right anchored junctions but I need to take strand into account
@@ -136,28 +142,28 @@ annotateJunctions <- function(file, intron_db, file_id){
 
   # left-anchored
   anchored_start <- novel_junctions %>%
-    semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
-    mutate( type = ifelse( strand == "+", "5'-anchored", "3'-anchored") )
+    dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
+    dplyr::mutate( type = ifelse( strand == "+", "5'-anchored", "3'-anchored") )
 
   # right anchored
   # + are 3'-anchored, - are 5'-anchored
   anchored_end <- novel_junctions %>%
-    semi_join( intron_db, by = c("chr", "end", "strand") ) %>%
-    mutate( type = ifelse( strand == "+", "3'-anchored", "5'-anchored") )
+    dplyr::semi_join( intron_db, by = c("chr", "end", "strand") ) %>%
+    dplyr::mutate( type = ifelse( strand == "+", "3'-anchored", "5'-anchored") )
 
   cryptic_anchored <- rbind( anchored_start, anchored_end) %>%
-    arrange( chr,start ) %>%
-    anti_join( skiptic, by = c("chr", "start", "end", "count", "strand") ) %>%
-    filter( !duplicated( paste(chr, start, end) ) )
+    dplyr::arrange( chr,start ) %>%
+    dplyr::anti_join( skiptic, by = c("chr", "start", "end", "count", "strand") ) %>%
+    dplyr::filter( !duplicated( paste(chr, start, end) ) )
 
   cryptic_unanchored <- novel_junctions %>%
-    anti_join(skiptic, by = c("chr", "start", "end", "count", "strand")) %>%
-    anti_join(cryptic_anchored, by = c("chr", "start", "end", "count", "strand")) %>%
-    mutate( type = "cryptic_unanchored")
+    dplyr::anti_join(skiptic, by = c("chr", "start", "end", "count", "strand")) %>%
+    dplyr::anti_join(cryptic_anchored, by = c("chr", "start", "end", "count", "strand")) %>%
+    dplyr::mutate( type = "cryptic_unanchored")
 
   # bind all together
   all_junctions <- rbind( annotated, skiptic, cryptic_unanchored, cryptic_anchored ) %>%
-    arrange(chr,start)
+    dplyr::arrange(chr,start)
 
   # message(dim(all_junctions))
   # print(table(all_junctions$type))
@@ -165,13 +171,13 @@ annotateJunctions <- function(file, intron_db, file_id){
 
   # add back in gene and transcript names for annotated junctions
   all_junctions <- all_junctions %>%
-    left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
-    select( chr, start,end, count, strand, type, EnsemblID, gene_name, transcript )
+    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
+    dplyr::select( chr, start,end, count, strand, type, EnsemblID, gene_name, transcript )
 
   # create
   summary <- group_by(all_junctions, type) %>%
-    summarise( n_unique = n(), sum_counts = sum(count)) %>%
-    mutate( prop_unique = n_unique / sum(n_unique),
+    dplyr::summarise( n_unique = n(), sum_counts = sum(count)) %>%
+    dplyr::mutate( prop_unique = n_unique / sum(n_unique),
             prop_counts = sum_counts / sum(sum_counts) )
 
   #SRR_code <- gsub(".leafcutter_op", "", basename(file) )
@@ -181,10 +187,10 @@ annotateJunctions <- function(file, intron_db, file_id){
     ( nrow(cryptic_unanchored) + nrow(cryptic_anchored) + nrow(skiptic) == nrow(novel_junctions) ) &
     nrow(all_junctions) == nrow(intersect_both) ){
     return(
-      list(ID = file_id,
-           counts = summary,
-           all = as.tbl(all_junctions)
-           )
+      list(
+        ID = file_id,
+        counts = summary,
+        all = as.tbl(all_junctions) )
       )
   }else{
     message("Error! The sums don't add up")
@@ -219,16 +225,16 @@ createSimpleProportions <- function( annotated_df ){
     prop_sum_skiptic <- sample$sum_counts[5] / sum(sample$sum_counts)
     prop_sum <- 1 - (sample$sum_counts[3] / sum(sample$sum_counts) )
     annotated_df$proportions <- data.frame(ID = ID,
-                                           prop_unique = prop_unique,
-                                           prop_sum = prop_sum,
-                                           prop_unique_5anchored = prop_unique_5anchored,
-                                           prop_unique_3anchored = prop_unique_3anchored,
-                                           prop_unique_unanchored = prop_unique_unanchored,
-                                           prop_unique_skiptic = prop_unique_skiptic,
-                                           prop_sum_5anchored = prop_sum_5anchored,
-                                           prop_sum_3anchored = prop_sum_3anchored,
-                                           prop_sum_unanchored = prop_sum_unanchored,
-                                           prop_sum_skiptic = prop_sum_skiptic)
+                                           propunique.all = prop_unique,
+                                           propsum.all = prop_sum,
+                                           propunique.5anchored = prop_unique_5anchored,
+                                           propunique.3anchored = prop_unique_3anchored,
+                                           propunique.unanchored = prop_unique_unanchored,
+                                           propunique.skiptic = prop_unique_skiptic,
+                                           propsum.5anchored = prop_sum_5anchored,
+                                           propsum.3anchored = prop_sum_3anchored,
+                                           propsum.unanchored = prop_sum_unanchored,
+                                           propsum.skiptic = prop_sum_skiptic)
   return(annotated_df)
 }
 
