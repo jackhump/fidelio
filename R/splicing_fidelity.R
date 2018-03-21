@@ -51,7 +51,7 @@ prepareIntrons <- function(intronList){
 #' @examples
 annotateJunctions <- function(file, intron_db, file_id){
   # function to annotate a list of junctions according to a set of introns
-  # presumably from GENCODE
+  # presumably from GENCODE?
 
   if( !file.exists(file) ){
     message("file doesnt exist")
