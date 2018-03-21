@@ -60,9 +60,9 @@ annotateJunctions <- function(file, intron_db, file_id){
 
   # check if gzipped
   if( grepl(".gz$", file) ){
-    junctions <- data.table::fread(paste("zless", file), data.table=FALSE) # in Rstudio you need, logical01=FALSE)
+    junctions <- data.table::fread(paste("zless", file), data.table=FALSE, sep = "\t") # in Rstudio you need, logical01=FALSE)
   }else{
-    junctions <- data.table::fread(file, data.table=FALSE) # in Rstudio you need, logical01=FALSE)
+    junctions <- data.table::fread(file, data.table=FALSE, sep = "\t") # in Rstudio you need, logical01=FALSE)
   }
 
 
@@ -73,7 +73,7 @@ annotateJunctions <- function(file, intron_db, file_id){
     all( sapply(junctions[,2:ncol(junctions)], is.integer) )
     ){
     fileType <- "STAR"
-
+    message("file type is STAR")
     sorted <- junctions %>%
       dplyr::rename( chr = V1,
               start = V2,
@@ -91,14 +91,42 @@ annotateJunctions <- function(file, intron_db, file_id){
       dplyr::mutate( start = start - 1,
               strand = ifelse( strand == 1, "+", "-" ))
   }
+  # junctions from leafcutter
   if(ncol(junctions) == 6){
   fileType <- "leafcutter"
+  message("file type is leafcutter")
   sorted <- junctions %>%
     dplyr::arrange(V1, V2) %>%
     dplyr::mutate( V1 = paste0("chr", V1)) %>%
     dplyr::rename( chr = V1, start = V2, end = V3, dot = V4, count = V5, strand = V6) %>%
     dplyr::select( chr, start, end, count, strand )
   }
+  # junctions from RegTools
+  if(ncol(junctions) == 12){
+    fileType <- "regtools"
+    message("file type is regtools")
+    sorted <- junctions %>%
+      dplyr::arrange(V1,V2) %>%
+      dplyr::rename(
+        chr = V1,
+        start = V2,
+        end = V3,
+        name = V4,
+        count = V5,
+        strand = V6,
+        thickStart = V7,
+        thickEnd = V8,
+        itemRgb = V9,
+        blockCount = V10,
+        blockSizes = V11,
+        blockStarts = V12
+        ) %>%
+      tidyr::separate(col = blockSizes, into = c("anchorStart", "anchorEnd"), sep = ",", remove = FALSE) %>%
+      dplyr::mutate( anchorStart = as.numeric(anchorStart), anchorEnd = as.numeric(anchorEnd)) %>%
+      dplyr::mutate( start = start + anchorStart, end = end - anchorEnd) %>%
+      dplyr::select( chr, start, end, count, strand )
+  }
+
 
   if( fileType == "unknown"){
     message("file not recognised")
