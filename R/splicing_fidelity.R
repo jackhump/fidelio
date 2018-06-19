@@ -49,7 +49,7 @@ prepareIntrons <- function(intronList){
 #' @export
 #'
 #' @examples
-annotateJunctions <- function(file, intron_db, file_id){
+annotateJunctions <- function(file, intron_db, file_id, drop_chrM = FALSE, drop_sex = FALSE){
   # function to annotate a list of junctions according to a set of introns
   # presumably from GENCODE?
 
@@ -131,6 +131,16 @@ annotateJunctions <- function(file, intron_db, file_id){
   if( fileType == "unknown"){
     message("file not recognised")
     return(NULL)
+  }
+
+  if( drop_sex == TRUE){
+    sorted <-
+      filter(sorted, ! chr %in% c("chrX","chrY"))
+  }
+
+  if( drop_chrM == TRUE){
+    sorted <-
+      filter(sorted, chr != "chrM")
   }
 
   # find exact matches of both splice sites
