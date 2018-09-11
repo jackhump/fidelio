@@ -26,6 +26,11 @@ findAllJunctions <- function(fidelity.files, refrange) {
   for(eachfile in fidelity.files) {
     load(eachfile)
 
+    # older versions have a weird format
+    if( names(annotated)[1] == "file"){
+      annotated <- annotated$file
+    }
+
     # assumes that multiple samples are contained in the same rdata file
     # if only 1 sample present?
     if(all(names(annotated) %in% c("ID", "counts", "all"))){
@@ -105,7 +110,7 @@ findCrypticExons <- function(anchored_junctions, genes) {
   return(cryptic_exons)
 } # end of function
 
-# Co  unt cryptics and skiptics
+# Count cryptics and skiptics
 countCryptSkip <- function(cryptic_exons, fidelity.files, refrange) {
    cryptic_exons_ids <- paste0(cryptic_exons$seqnames.x, ":", cryptic_exons$start.x, "-",
                             cryptic_exons$end.x, ":", cryptic_exons$strand.x)
