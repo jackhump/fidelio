@@ -146,19 +146,28 @@ annotateJunctions <- function(file, intron_db, file_id, drop_chrM = FALSE, drop_
   # find exact matches of both splice sites
   intersect_both <- sorted %>%
     dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
-    dplyr::select( chr, start,end, strand, count, transcript )
+    dplyr::select( chr, start,end, count, strand, EnsemblID, gene_name, transcript  )
 
   # get just annotated junctions out
   annotated <- intersect_both %>%
     dplyr::filter( !is.na(transcript) ) %>%
     dplyr::mutate( type = "annotated") %>%
-    dplyr::select( chr, start, end, strand, count, type)
+    dplyr::select( chr, start,end, strand, count, type, EnsemblID, gene_name, transcript  )
 
   # by definition any junction that can't be found in the GENCODE intron table is novel
-  novel_junctions <- filter(intersect_both, is.na(transcript)) %>%
+  novel_junctions <- dplyr::filter(intersect_both, is.na(transcript)) %>%
     dplyr::select( chr, start, end, strand, count)
 
+  # annotate novel junctions to which genes they belong to
+  intron_db_starts <-
+    dplyr::select(intron_db, chr, start, strand, EnsemblID, gene_name) %>%
+    dplyr::mutate(transcript = NA) %>%
+    dplyr::distinct()
 
+  intron_db_ends <-
+    dplyr::select(intron_db, chr,end, strand, EnsemblID, gene_name) %>%
+    dplyr::mutate(transcript = NA) %>%
+    dplyr::distinct()
   # split novel junctions into different types
   # skiptics - both ends are annotated but separately
   # anchored cryptics - only one end is annotated
@@ -171,48 +180,85 @@ annotateJunctions <- function(file, intron_db, file_id, drop_chrM = FALSE, drop_
     dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
     dplyr::semi_join( intron_db, by = c( "chr", "end", "strand" ) ) %>%
     dplyr::arrange( chr,start )  %>%
-    dplyr::mutate( type = "skiptic")
+    dplyr::mutate( type = "skiptic") %>%
+    left_join(intron_db_ends, by = c("chr","end", "strand")) %>%
+    dplyr::distinct( chr, start,end,strand, .keep_all = TRUE) %>%
+    dplyr::select( chr, start,end, strand, count, type, EnsemblID, gene_name, transcript  )
 
-  # for singly annotated junctions
+  # SINGLY ANNOTATED JUNCTIONS
+
   # I can find left and right anchored junctions but I need to take strand into account
   # eg a left-anchored + junction is 5'-annotated and a right-anchored + junction is 3'-annotated
   # so I should categorise by this instead
 
+  # annotate each junction with the gene that the anchored splice site belongs to
+
   # left-anchored
   anchored_start <- novel_junctions %>%
     dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
-    dplyr::mutate( type = ifelse( strand == "+", "5'-anchored", "3'-anchored") )
+    dplyr::mutate( type = ifelse( strand == "+", "5'-anchored", "3'-anchored") ) %>%
+    dplyr::left_join( intron_db_starts, by = c("chr","start", "strand") ) %>%
+    dplyr::distinct( chr, start,end,strand, .keep_all = TRUE) %>% # remove any duplication weirdness
+    dplyr::select( chr, start,end, strand, count, type, EnsemblID, gene_name, transcript )
 
   # right anchored
   # + are 3'-anchored, - are 5'-anchored
   anchored_end <- novel_junctions %>%
     dplyr::semi_join( intron_db, by = c("chr", "end", "strand") ) %>%
-    dplyr::mutate( type = ifelse( strand == "+", "3'-anchored", "5'-anchored") )
+    dplyr::mutate( type = ifelse( strand == "+", "3'-anchored", "5'-anchored") ) %>%
+    dplyr::left_join( intron_db_ends, by = c("chr","end", "strand") ) %>%
+    dplyr::distinct( chr, start,end,strand, .keep_all = TRUE) %>% # remove any duplication weirdness
+    dplyr::select( chr, start,end, strand, count, type, EnsemblID, gene_name, transcript )
 
   cryptic_anchored <- rbind( anchored_start, anchored_end) %>%
     dplyr::arrange( chr,start ) %>%
     dplyr::anti_join( skiptic, by = c("chr", "start", "end", "count", "strand") ) %>%
     dplyr::filter( !duplicated( paste(chr, start, end) ) )
 
+  ## UNANCHORED JUNCTIONS
+
   cryptic_unanchored <- novel_junctions %>%
     dplyr::anti_join(skiptic, by = c("chr", "start", "end", "count", "strand")) %>%
     dplyr::anti_join(cryptic_anchored, by = c("chr", "start", "end", "count", "strand")) %>%
     dplyr::mutate( type = "cryptic_unanchored")
 
+  # can I infer which genes an unanchored junction belongs to if it falls within the gene and is of the same strand?
+  intron_db_gene_ranges <- intron_db %>%
+    dplyr::group_by(EnsemblID) %>%
+    dplyr::summarise( chr = unique(chr),
+               start = min(start),
+               end = max(end),
+               gene_name = unique(gene_name),
+               strand = unique(strand) ) %>%
+    dplyr::arrange(chr, start)
+
+  # full join and then filter on whether the start and end are within the range start and end
+  cryptic_unanchored_annotated <-
+    dplyr::full_join(cryptic_unanchored, intron_db_gene_ranges,
+                     by = c("chr", "strand"),
+                     suffix = c("", ".range")) %>%
+    filter(start >= start.range & end <= end.range) %>%
+    dplyr::distinct( chr, start,end,strand, .keep_all = TRUE) %>%
+    mutate(transcript = NA) %>%
+    dplyr::select( chr, start,end, strand, count, type, EnsemblID, gene_name, transcript )
+
+  cryptic_unanchored_novel <-
+    dplyr::anti_join(cryptic_unanchored, cryptic_unanchored_annotated, by = c("chr", "start", "end", "count", "strand")) %>%
+    mutate(EnsemblID = NA, gene_name = NA, transcript = NA) %>%
+    dplyr::select( chr, start,end, strand, count, type, EnsemblID, gene_name, transcript )
+
+
   # bind all together
-  all_junctions <- rbind( annotated, skiptic, cryptic_unanchored, cryptic_anchored ) %>%
+  all_junctions <- rbind( annotated, skiptic, cryptic_unanchored_novel, cryptic_unanchored_annotated, cryptic_anchored ) %>%
     dplyr::arrange(chr,start)
 
   # message(dim(all_junctions))
   # print(table(all_junctions$type))
   # print(head(intron_db))
 
-  # add back in gene and transcript names for annotated junctions
-  all_junctions <- all_junctions %>%
-    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
-    dplyr::select( chr, start,end, count, strand, type, EnsemblID, gene_name, transcript )
 
-  # create
+
+  # create summary
   summary <- group_by(all_junctions, type) %>%
     dplyr::summarise( n_unique = n(), sum_counts = sum(count)) %>%
     dplyr::mutate( prop_unique = n_unique / sum(n_unique),
@@ -248,6 +294,14 @@ annotateJunctions <- function(file, intron_db, file_id, drop_chrM = FALSE, drop_
 #'
 #' @examples
 createSimpleProportions <- function( annotated_df ){
+    # remake counts from sample
+
+    annotated_df$counts <-
+      group_by(annotated_df$all, type) %>%
+      dplyr::summarise( n_unique = n(), sum_counts = sum(count)) %>%
+      dplyr::mutate( prop_unique = n_unique / sum(n_unique),
+                   prop_counts = sum_counts / sum(sum_counts) )
+
     sample <- annotated_df$counts
     ID <- annotated_df$ID
     # unique junctions
@@ -298,4 +352,142 @@ createSimpleProportions <- function( annotated_df ){
 #         arrange( chr )
 
 
+
+annotate_junctions <- function(sorted, intron_db, drop_sex = TRUE, drop_chrM = TRUE){
+
+  if( drop_sex == TRUE){
+    sorted <-
+      filter(sorted, ! chr %in% c("chrX","chrY"))
+  }
+
+  if( drop_chrM == TRUE){
+    sorted <-
+      filter(sorted, chr != "chrM")
+  }
+
+  # find exact matches of both splice sites
+  intersect_both <- sorted %>%
+    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
+    dplyr::select( chr, start,end, strand, count, transcript )
+
+  # get just annotated junctions out
+  annotated <- intersect_both %>%
+    dplyr::filter( !is.na(transcript) ) %>%
+    dplyr::mutate( type = "annotated") %>%
+    dplyr::select( chr, start, end, strand, count, type)
+
+  # by definition any junction that can't be found in the GENCODE intron table is novel
+  novel_junctions <- filter(intersect_both, is.na(transcript)) %>%
+    dplyr::select( chr, start, end, strand, count)
+
+
+  # split novel junctions into different types
+  # skiptics - both ends are annotated but separately
+  # anchored cryptics - only one end is annotated
+  # cryptic_unanchored cryptics - neither end are annotated
+
+  # semi join only keeps rows in X that match in Y
+  # so only keep novel junctions where start and end match separately
+
+  skiptic <- novel_junctions %>%
+    dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
+    dplyr::semi_join( intron_db, by = c( "chr", "end", "strand" ) ) %>%
+    dplyr::arrange( chr,start )  %>%
+    dplyr::mutate( type = "skiptic")
+
+  # for singly annotated junctions
+  # I can find left and right anchored junctions but I need to take strand into account
+  # eg a left-anchored + junction is 5'-annotated and a right-anchored + junction is 3'-annotated
+  # so I should categorise by this instead
+
+  # left-anchored
+  anchored_start <- novel_junctions %>%
+    dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
+    dplyr::mutate( type = ifelse( strand == "+", "novel3", "novel5") )
+
+  # right anchored
+  # + are 3'-anchored, - are 5'-anchored
+  anchored_end <- novel_junctions %>%
+    dplyr::semi_join( intron_db, by = c("chr", "end", "strand") ) %>%
+    dplyr::mutate( type = ifelse( strand == "+", "novel5", "novel3") )
+
+  cryptic_anchored <- rbind( anchored_start, anchored_end) %>%
+    dplyr::arrange( chr,start ) %>%
+    dplyr::anti_join( skiptic, by = c("chr", "start", "end", "count", "strand") ) %>%
+    dplyr::filter( !duplicated( paste(chr, start, end) ) )
+
+  cryptic_unanchored <- novel_junctions %>%
+    dplyr::anti_join(skiptic, by = c("chr", "start", "end", "count", "strand")) %>%
+    dplyr::anti_join(cryptic_anchored, by = c("chr", "start", "end", "count", "strand")) %>%
+    dplyr::mutate( type = "cryptic_unanchored")
+
+  # bind all together
+  all_junctions <- rbind( annotated, skiptic, cryptic_unanchored, cryptic_anchored ) %>%
+    dplyr::arrange(chr,start)
+
+  # message(dim(all_junctions))
+  # print(table(all_junctions$type))
+  # print(head(intron_db))
+
+  # add back in gene and transcript names for annotated junctions
+  all_junctions <- all_junctions %>%
+    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
+    dplyr::select( chr, start,end, count, strand, type, EnsemblID, gene_name, transcript )
+
+  return(all_junctions)
+}
+
+
+
+
+# for use with recount rse_jx objects
+
+annotate_recount_junctions <- function(rse_jx, intron_db, drop_sex = TRUE, drop_chrM = TRUE, filter_threshold = NA){
+  junc_ranges <- rowRanges(rse_jx)
+  junc_counts <- assays(rse_jx)$counts
+
+  # if requested, filter by minimum count
+  if( !is.na(filter_threshold)){
+  to_filter <- apply(junc_counts >= filter_threshold , MARGIN = 1, FUN = any)
+  junc_counts <- junc_counts[to_filter,]
+  junc_ranges <- junc_ranges[to_filter,]
+  }
+
+  # get columns from the ranges info - use ID as count for now
+  sorted <- junc_ranges %>%
+    as.data.frame() %>%
+    select( "chr" = seqnames, start, end, count = junction_id, strand) %>%
+    mutate( chr = as.character(chr), strand = as.character(strand)) %>%
+    arrange( chr, start)
+
+  # 1-based / 0-based fuckery
+  sorted <- mutate(sorted, start = start - 1)
+
+
+  # do the annotating
+  all_junctions <- annotate_junctions(sorted, intron_db. drop_sex = drop_sex, drop_chrM = drop_chrM)
+
+  # now get counts for each sample
+  junc_ranges$annotation <- all_junctions$type[ match(junc_ranges$junction_id, all_junctions$count)]
+  # for each column in junc_ranges
+  count_recount_sample <- function(sample_id, annotation){
+    sample <- junc_counts[,sample_id]
+    split(sample, f = annotation) %>%
+      map( sum)
+  }
+  sample_counts <-
+    map_df( colnames(junc_counts), count_recount_sample, annotation = junc_ranges$annotation)
+
+
+  sample_props <- sweep(sample_counts, MARGIN = 1, STATS = rowSums(sample_counts), FUN = "/" ) %>%
+    mutate( sample = colnames(junc_counts) ) %>%
+    select( sample, everything() )
+
+  sample_counts <- sample_counts %>%
+    mutate( sample = colnames(junc_counts) ) %>%
+    select( sample, everything() )
+
+  return( list(junctions = all_junctions, counts = sample_counts, props = sample_props))
+
+}
 
