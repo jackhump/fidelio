@@ -438,6 +438,25 @@ annotate_junctions <- function(sorted, intron_db, drop_sex = TRUE, drop_chrM = T
 }
 
 
+downSampleJunctions <- function(data, sampleSize){
+	# downsample set of junctions to a number
+	# weight sampling by counts
+	junctions <- data$all
+	to_sample <- 
+		sample(1:nrow(junctions), 
+		prob = junctions$count, 
+		size = 1000, 
+		replace = TRUE )
+	
+	data$all <-
+	junctions[to_sample,] %>% 
+	group_by(chr,start,end) %>% 
+	summarise( count = n() )
+	# add some kind of reporting
+	#data$meta$downsample <- sampleSize
+	return(data)
+}
+
 
 
 # for use with recount rse_jx objects
