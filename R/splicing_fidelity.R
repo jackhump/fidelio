@@ -326,8 +326,45 @@ createSimpleProportions <- function( annotated_df ){
                                            propsum.5anchored = prop_sum_5anchored,
                                            propsum.3anchored = prop_sum_3anchored,
                                            propsum.unanchored = prop_sum_unanchored,
-                                           propsum.skiptic = prop_sum_skiptic)
+                                           propsum.skiptic = prop_sum_skiptic,
+                                           stringsAsFactors = FALSE
+                                           )
   return(annotated_df)
+}
+
+
+#' Bootstrap estimate junction proportions
+#' From list of junctions, remove a fixed proportion of a random set of genes and recalculate the proportions of each type of junction
+#' Returns a dataframe summarising the proportions of each bootstrap
+#' @param data
+#' @param percent_genes
+#' @param times
+#'
+#' @return
+#' @export
+#'
+#' @examples
+bootstrapProportions <- function(data, percent_genes = 0.1, times = 100, filtered = TRUE){
+  if(filtered == TRUE){
+    junctions <- data$filtered
+  }else{
+    junctions <- data$all
+  }
+  genes <- unique(junctions$gene_name)
+  genes <- genes[!is.na(genes)]
+  random_genes <-
+    replicate(n = times,
+              expr = sample(x = genes, size = length(genes) * percent_genes, replace = FALSE ),
+              simplify = FALSE
+    )
+  map_df( random_genes, ~{
+    randomise <- data
+    randomise$all <- dplyr::filter(randomise$all, gene_name %in% .x)
+    #print(nrow(randomise$all))
+    #return(randomise$all)
+    random_props <- fidelio::createSimpleProportions(randomise)
+    return(random_props$proportions)
+  })
 }
 
 #with(all_props, plot( prop_unique, prop_sum) )
@@ -350,94 +387,6 @@ createSimpleProportions <- function( annotated_df ){
 #         mutate(prop = (count /  end) * 1E6,
 #                chr = factor(chr, levels = paste0("chr", c(1:22,"X","Y") ) ) ) %>%
 #         arrange( chr )
-
-
-
-annotate_junctions <- function(sorted, intron_db, drop_sex = TRUE, drop_chrM = TRUE){
-
-  if( drop_sex == TRUE){
-    sorted <-
-      filter(sorted, ! chr %in% c("chrX","chrY"))
-  }
-
-  if( drop_chrM == TRUE){
-    sorted <-
-      filter(sorted, chr != "chrM")
-  }
-
-  # find exact matches of both splice sites
-  intersect_both <- sorted %>%
-    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
-    dplyr::select( chr, start,end, strand, count, transcript )
-
-  # get just annotated junctions out
-  annotated <- intersect_both %>%
-    dplyr::filter( !is.na(transcript) ) %>%
-    dplyr::mutate( type = "annotated") %>%
-    dplyr::select( chr, start, end, strand, count, type)
-
-  # by definition any junction that can't be found in the GENCODE intron table is novel
-  novel_junctions <- filter(intersect_both, is.na(transcript)) %>%
-    dplyr::select( chr, start, end, strand, count)
-
-
-  # split novel junctions into different types
-  # skiptics - both ends are annotated but separately
-  # anchored cryptics - only one end is annotated
-  # cryptic_unanchored cryptics - neither end are annotated
-
-  # semi join only keeps rows in X that match in Y
-  # so only keep novel junctions where start and end match separately
-
-  skiptic <- novel_junctions %>%
-    dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
-    dplyr::semi_join( intron_db, by = c( "chr", "end", "strand" ) ) %>%
-    dplyr::arrange( chr,start )  %>%
-    dplyr::mutate( type = "skiptic")
-
-  # for singly annotated junctions
-  # I can find left and right anchored junctions but I need to take strand into account
-  # eg a left-anchored + junction is 5'-annotated and a right-anchored + junction is 3'-annotated
-  # so I should categorise by this instead
-
-  # left-anchored
-  anchored_start <- novel_junctions %>%
-    dplyr::semi_join( intron_db, by = c("chr", "start", "strand") ) %>%
-    dplyr::mutate( type = ifelse( strand == "+", "novel3", "novel5") )
-
-  # right anchored
-  # + are 3'-anchored, - are 5'-anchored
-  anchored_end <- novel_junctions %>%
-    dplyr::semi_join( intron_db, by = c("chr", "end", "strand") ) %>%
-    dplyr::mutate( type = ifelse( strand == "+", "novel5", "novel3") )
-
-  cryptic_anchored <- rbind( anchored_start, anchored_end) %>%
-    dplyr::arrange( chr,start ) %>%
-    dplyr::anti_join( skiptic, by = c("chr", "start", "end", "count", "strand") ) %>%
-    dplyr::filter( !duplicated( paste(chr, start, end) ) )
-
-  cryptic_unanchored <- novel_junctions %>%
-    dplyr::anti_join(skiptic, by = c("chr", "start", "end", "count", "strand")) %>%
-    dplyr::anti_join(cryptic_anchored, by = c("chr", "start", "end", "count", "strand")) %>%
-    dplyr::mutate( type = "cryptic_unanchored")
-
-  # bind all together
-  all_junctions <- rbind( annotated, skiptic, cryptic_unanchored, cryptic_anchored ) %>%
-    dplyr::arrange(chr,start)
-
-  # message(dim(all_junctions))
-  # print(table(all_junctions$type))
-  # print(head(intron_db))
-
-  # add back in gene and transcript names for annotated junctions
-  all_junctions <- all_junctions %>%
-    dplyr::left_join(intron_db, by = c("chr","start", "end", "strand")) %>%
-    dplyr::select( chr, start,end, count, strand, type, EnsemblID, gene_name, transcript )
-
-  return(all_junctions)
-}
-
-
 
 
 # for use with recount rse_jx objects
@@ -465,7 +414,7 @@ annotate_recount_junctions <- function(rse_jx, intron_db, drop_sex = TRUE, drop_
 
 
   # do the annotating
-  all_junctions <- annotate_junctions(sorted, intron_db. drop_sex = drop_sex, drop_chrM = drop_chrM)
+  all_junctions <- annotate_junctions(sorted, intron_db, drop_sex = drop_sex, drop_chrM = drop_chrM)
 
   # now get counts for each sample
   junc_ranges$annotation <- all_junctions$type[ match(junc_ranges$junction_id, all_junctions$count)]
