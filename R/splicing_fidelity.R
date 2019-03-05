@@ -24,7 +24,7 @@ prepareIntrons <- function(intronList){
     dplyr::rename(chr = V1,
          start = V2,
          end = V3,
-         gene = V4,
+         gene_name = V4,
          EnsemblID = V5,
          strand = V6,
          transcript = V7,
@@ -34,6 +34,11 @@ prepareIntrons <- function(intronList){
     dplyr::select( -dot ) %>%
     dplyr::mutate( end = end - 1 ) %>% # due to 0-base/1-base shenanigans
     dplyr::filter( !duplicated( paste(chr, start, end) ) ) # remove duplicate entries
+
+  #anno <- data.table::fread(annotation, data.table = FALSE)
+  #intron_db$gene_name <- anno$external_gene_name[ match( str_split_fixed(intron_db$EnsemblID, "\\.", 2)[,1], anno$EnsemblID)  ]
+
+
   return(intron_db)
 }
 
@@ -293,14 +298,17 @@ annotateJunctions <- function(file, intron_db, file_id, drop_chrM = FALSE, drop_
 #' @export
 #'
 #' @examples
-createSimpleProportions <- function( annotated_df ){
-    # remake counts from sample
+createSimpleProportions <- function( data ){
 
+  output <-
+    map(data, ~{
+  # remake counts from sample
+    annotated_df <- .x
     annotated_df$counts <-
       group_by(annotated_df$all, type) %>%
       dplyr::summarise( n_unique = n(), sum_counts = sum(count)) %>%
       dplyr::mutate( prop_unique = n_unique / sum(n_unique),
-                   prop_counts = sum_counts / sum(sum_counts) )
+                     prop_counts = sum_counts / sum(sum_counts) )
 
     sample <- annotated_df$counts
     ID <- annotated_df$ID
@@ -328,8 +336,10 @@ createSimpleProportions <- function( annotated_df ){
                                            propsum.unanchored = prop_sum_unanchored,
                                            propsum.skiptic = prop_sum_skiptic,
                                            stringsAsFactors = FALSE
-                                           )
-  return(annotated_df)
+    )
+    return(annotated_df)
+  })
+  return(output)
 }
 
 
@@ -344,99 +354,93 @@ createSimpleProportions <- function( annotated_df ){
 #' @export
 #'
 #' @examples
-bootstrapProportions <- function(data, percent_genes = 0.1, times = 100, filtered = TRUE){
-  if(filtered == TRUE){
-    junctions <- data$filtered
-  }else{
-    junctions <- data$all
-  }
-  genes <- unique(junctions$gene_name)
-  genes <- genes[!is.na(genes)]
-  random_genes <-
-    replicate(n = times,
-              expr = sample(x = genes, size = length(genes) * percent_genes, replace = FALSE ),
-              simplify = FALSE
-    )
-  map_df( random_genes, ~{
-    randomise <- data
-    randomise$all <- dplyr::filter(randomise$all, gene_name %in% .x)
-    #print(nrow(randomise$all))
-    #return(randomise$all)
-    random_props <- fidelio::createSimpleProportions(randomise)
-    return(random_props$proportions)
+bootstrapProportions <- function(data, percent_genes = 0.9, times = 100){
+  map( data, ~{
+    res <- .x
+    junctions <- res$all
+    genes <- unique(junctions$gene_name)
+    genes <- genes[!is.na(genes)]
+    random_genes <-
+      replicate(n = times,
+                expr = sample(x = genes, size = ( length(genes) * percent_genes ) , replace = FALSE ),
+                simplify = FALSE
+      )
+    res$bootstrap <-
+      map_df( random_genes, ~{
+        randomise <- res
+        randomise$all <- dplyr::filter(randomise$all, gene_name %in% .x)
+        #print(nrow(randomise$all))
+        #return(randomise$all)
+        random_props <- fidelio::createSimpleProportions(list(randomise))[[1]]
+
+        return(random_props$proportions)
+      })
+
+    return(res)
   })
 }
 
-#with(all_props, plot( prop_unique, prop_sum) )
-#
-# chr_sizes <- intron_db %>%
-#         group_by(chr) %>%
-#         summarise( end = max(end) )
-#
-#
-# # what is the distribution of novel junctions per chromosome?
-# chr_sizes <- intron_db %>%
-#   group_by(chr) %>%
-#   summarise( end = max(end) )
-#
-# novel_junctions_per_chr <- novel_junctions %>%
-#         group_by( chr ) %>%
-#         summarise( count = sum(count) ) %>%
-#         left_join( chr_sizes, by = "chr" ) %>%
-#         filter( !grepl( "GL|MT", chr) ) %>%
-#         mutate(prop = (count /  end) * 1E6,
-#                chr = factor(chr, levels = paste0("chr", c(1:22,"X","Y") ) ) ) %>%
-#         arrange( chr )
+
+#' Filter sets of junctions
+#'
+#' @param data
+#' @param min_count
+#'
+#' @return
+#' @export
+#'
+#' @examples
+filterJunctions <- function(data, min_count = 10){
+  res <-
+    map( data, ~{
+      junctions <- .x$all
+      filtered <- dplyr::filter(junctions, count >= min_count & !is.na(EnsemblID))
+      .x$all <- filtered
+      return(.x)
+    })
+  return(res)
+}
 
 
-# for use with recount rse_jx objects
 
-annotate_recount_junctions <- function(rse_jx, intron_db, drop_sex = TRUE, drop_chrM = TRUE, filter_threshold = NA){
-  junc_ranges <- rowRanges(rse_jx)
-  junc_counts <- assays(rse_jx)$counts
+#' Downsample set of junctions
+#'
+#' @param data
+#' @param sampleSize
+#'
+#' @return
+#' @export
+#'
+#' @examples
+downSampleJunctions <- function(data){
 
-  # if requested, filter by minimum count
-  if( !is.na(filter_threshold)){
-  to_filter <- apply(junc_counts >= filter_threshold , MARGIN = 1, FUN = any)
-  junc_counts <- junc_counts[to_filter,]
-  junc_ranges <- junc_ranges[to_filter,]
-  }
-
-  # get columns from the ranges info - use ID as count for now
-  sorted <- junc_ranges %>%
-    as.data.frame() %>%
-    select( "chr" = seqnames, start, end, count = junction_id, strand) %>%
-    mutate( chr = as.character(chr), strand = as.character(strand)) %>%
-    arrange( chr, start)
-
-  # 1-based / 0-based fuckery
-  sorted <- mutate(sorted, start = start - 1)
+  totals <-
+    map_dbl(data, ~{
+      sum(.x$all$count)
+    })
 
 
-  # do the annotating
-  all_junctions <- annotate_junctions(sorted, intron_db, drop_sex = drop_sex, drop_chrM = drop_chrM)
+  sampleSize <- min(totals)
 
-  # now get counts for each sample
-  junc_ranges$annotation <- all_junctions$type[ match(junc_ranges$junction_id, all_junctions$count)]
-  # for each column in junc_ranges
-  count_recount_sample <- function(sample_id, annotation){
-    sample <- junc_counts[,sample_id]
-    split(sample, f = annotation) %>%
-      map( sum)
-  }
-  sample_counts <-
-    map_df( colnames(junc_counts), count_recount_sample, annotation = junc_ranges$annotation)
+  output <- map(data, ~{
+    # downsample set of junctions to a number
+    # weight sampling by counts
+    junctions <- .x$all
+    to_sample <-
+      sample(1:nrow(junctions),
+             prob = junctions$count,
+             size = sampleSize,
+             replace = TRUE )
 
+    .x$all <-
+      junctions[to_sample,] %>%
+      group_by(chr,start,end,strand,type,EnsemblID, gene_name, transcript) %>%
+      summarise( count = n() ) %>%
+      select(chr,start,end,strand,count,type,EnsemblID, gene_name, transcript) %>%
+      as_tibble()
+    return(.x)
+  })
 
-  sample_props <- sweep(sample_counts, MARGIN = 1, STATS = rowSums(sample_counts), FUN = "/" ) %>%
-    mutate( sample = colnames(junc_counts) ) %>%
-    select( sample, everything() )
-
-  sample_counts <- sample_counts %>%
-    mutate( sample = colnames(junc_counts) ) %>%
-    select( sample, everything() )
-
-  return( list(junctions = all_junctions, counts = sample_counts, props = sample_props))
-
+	return(output)
 }
 
