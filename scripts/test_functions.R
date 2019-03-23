@@ -28,8 +28,8 @@ files <- read.table(files, header=TRUE, stringsAsFactors=FALSE)
 files <- files %>%
   mutate(
     experiment_code = str_split_fixed(file_id, "_", 4)[,3],
-    experiment_target = str_split_fixed(file_id, "_",4)[,1],
-    replicate = str_split_fixed(file_id, "_",5)[,5] # watch out for this!
+    experiment_target = str_split_fixed(file_id, "_",4)[,1]#,
+    #replicate = str_split_fixed(file_id, "_",4)[,1] # watch out for this!
   )
 file.exists(files$file)
 
@@ -47,7 +47,7 @@ annotated <- fidelio::createSimpleProportions(annotated)
 
 # Compare filtering -> bootstrapping to filtering -> downsampling -> bootstrapping
 
-bootstrap_plot <- function(data, mytitle ="bootstrap plot", mysubtitle = "data"){
+bootstrap_plot <- function(data, title ="bootstrap plot", subtitle = "data"){
   props <- map_df(data, "bootstrap")
   props %>%
   tidyr::gather( "key", "value", -ID) %>%
@@ -61,37 +61,37 @@ bootstrap_plot <- function(data, mytitle ="bootstrap plot", mysubtitle = "data")
   #scale_colour_manual( values = c("control" = "black", "SNRNP70" = "red",
   #                                "U2AF1" = "blue")) +
   #facet_wrap(~method, nrow = 2, scales = "free") +
-  labs(title = mytitle,
-       subtitle = mysubtitle) +
+  labs(title = title,
+       subtitle = subtitle) +
   theme_bw()
 }
 
 raw <- annotated
-raw <- fidelio::bootstrapProportions(raw, times = 100, percent_genes = 0.1)
+#raw <- fidelio::bootstrapProportions(raw, times = 100, percent_genes = 0.1)
 raw_50 <- fidelio::bootstrapProportions(raw, times = 100, percent_genes = 0.5)
-raw_90 <- fidelio::bootstrapProportions(raw, times = 100, percent_genes = 0.9)
-
-bootstrap_plot(raw, mysubtitle = "10% sample") +
-  bootstrap_plot(raw_50, mysubtitle = "50% sample") +
-  bootstrap_plot(raw_90, mysubtitle = "90% sample")
-
-# remove intergenic junctions and any junction with count < 10
-filtered <-
-  annotated %>%
-  fidelio::filterJunctions(min_count = 10) %>%
-  fidelio::createSimpleProportions() %>%
-  fidelio::bootstrapProportions(percent_genes = 0.9, times = 100)
-
-filtered_5 <-
-  annotated %>%
-  fidelio::filterJunctions(min_count = 5) %>%
-  fidelio::createSimpleProportions() %>%
-  fidelio::bootstrapProportions(percent_genes = 0.9, times = 100)
-
-
-bootstrap_plot(raw_90, mysubtitle = "raw - 90% sample") +
-  bootstrap_plot(filtered_5, mysubtitle = "filtered >= 5 and bootstrapped 90%") +
-  bootstrap_plot(filtered, mysubtitle = "filtered >= 10 and bootstrapped 90%")
+# raw_90 <- fidelio::bootstrapProportions(raw, times = 100, percent_genes = 0.9)
+#
+# bootstrap_plot(raw, mysubtitle = "10% sample") +
+#   bootstrap_plot(raw_50, mysubtitle = "50% sample") +
+#   bootstrap_plot(raw_90, mysubtitle = "90% sample")
+#
+# # remove intergenic junctions and any junction with count < 10
+# filtered <-
+#   annotated %>%
+#   fidelio::filterJunctions(min_count = 10) %>%
+#   fidelio::createSimpleProportions() %>%
+#   fidelio::bootstrapProportions(percent_genes = 0.9, times = 100)
+#
+# filtered_5 <-
+#   annotated %>%
+#   fidelio::filterJunctions(min_count = 5) %>%
+#   fidelio::createSimpleProportions() %>%
+#   fidelio::bootstrapProportions(percent_genes = 0.9, times = 100)
+#
+#
+# bootstrap_plot(raw_90, mysubtitle = "raw - 90% sample") +
+#   bootstrap_plot(filtered_5, mysubtitle = "filtered >= 5 and bootstrapped 90%") +
+#   bootstrap_plot(filtered, mysubtitle = "filtered >= 10 and bootstrapped 90%")
 
 
 # downsample junctions to lowest number and redo bootstrapping
@@ -100,11 +100,37 @@ downsampled <-
   annotated %>%
   fidelio::filterJunctions(min_count = 10) %>%
   fidelio::downSampleJunctions() %>%
-  fidelio::bootstrapProportions(percent_genes = 0.9, times = 100)
+  fidelio::bootstrapProportions(percent_genes = 0.5, times = 100)
 
+# downsample before or after filtering?
+
+# YES! this flattens the effect of DDX5 knockdown - I'm assuming this should have any effect on splicing
+
+downsampled_first <-
+  annotated %>%
+  fidelio::downSampleJunctions() %>%
+  fidelio::filterJunctions(min_count = 10) %>%
+  fidelio::bootstrapProportions(percent_genes = 0.5, times = 100)
+
+# relax filtering
+downsampled_first_5 <-
+  annotated %>%
+  fidelio::downSampleJunctions() %>%
+  fidelio::filterJunctions(min_count = 5) %>%
+  fidelio::bootstrapProportions(percent_genes = 0.5, times = 100)
+
+bootstrap_plot(raw_50, subtitle = "no filtering or downsampling") +
+bootstrap_plot(downsampled, subtitle = "downsampling AFTER filtering - 10 junc min") +
+  bootstrap_plot(downsampled_first, subtitle = "downsampled BEFORE filtering - 10 junc min") +
+  bootstrap_plot(downsampled_first_5, subtitle = "downsampled BEFORE filtering - 5 junc min")
+
+junctionANOVA(downsampled)
+junctionANOVA(downsampled_first)
+junctionANOVA(downsampled_first_5)
 
 #%>%
   #fidelio::createSimpleProportions() %>%
+
 
 bootstrap_plot(raw_90, mysubtitle = "no filtering") + #ylim(0,0.006) +
 
@@ -122,6 +148,8 @@ junctionANOVA <- function(data){
     left_join(files, by = c("ID" = "file_id")) #%>%
     #mutate(replicate = as.factor(experiment_code))
 
+    # fudge - this needs to be fixed!
+  #bootstraps$replicate <- bootstraps$experiment_code
     # fit model per junction type
     anova_res <-
       split(bootstraps, bootstraps$classification) %>%

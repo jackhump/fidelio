@@ -19,7 +19,7 @@ library(data.table)
 #'
 #' @examples
 prepareIntrons <- function(intronList){
-  introns <- data.table::fread(paste( "zcat < ", intronList) , data.table=FALSE)
+  introns <- data.table::fread(cmd = paste( "zcat < ", intronList) , data.table=FALSE, header = FALSE)
   intron_db <- introns %>%
     dplyr::rename(chr = V1,
          start = V2,
@@ -65,9 +65,9 @@ annotateJunctions <- function(file, intron_db, file_id, drop_chrM = FALSE, drop_
 
   # check if gzipped
   if( grepl(".gz$", file) ){
-    junctions <- data.table::fread(paste("zless", file), data.table=FALSE, sep = "\t") # in Rstudio you need, logical01=FALSE)
+    junctions <- data.table::fread(cmd = paste("zless", file), data.table=FALSE, sep = "\t", header= FALSE) # in Rstudio you need, logical01=FALSE)
   }else{
-    junctions <- data.table::fread(file, data.table=FALSE, sep = "\t") # in Rstudio you need, logical01=FALSE)
+    junctions <- data.table::fread(file, data.table=FALSE, sep = "\t", header=FALSE) # in Rstudio you need, logical01=FALSE)
   }
 
 
@@ -442,5 +442,51 @@ downSampleJunctions <- function(data){
   })
 
 	return(output)
+}
+
+
+
+#' ANOVA to test effect of condition on bootstrap estimate
+#'
+#' @param data
+#'
+#' @return
+#' @export
+#'
+#' @examples
+junctionANOVA <- function(data){
+  bootstraps <-
+    map_df(data, "bootstrap") %>%
+    tidyr::gather( "key", "value", -ID) %>%
+    tidyr::separate(key, into = c("method", "classification") ) %>%
+    dplyr::filter( classification != "all") %>%
+    filter(method == "propsum") %>%
+    left_join(files, by = c("ID" = "file_id")) #%>%
+  #mutate(replicate = as.factor(experiment_code))
+
+  # fudge - this needs to be fixed!
+  #bootstraps$replicate <- bootstraps$experiment_code
+  # fit model per junction type
+  anova_res <-
+    split(bootstraps, bootstraps$classification) %>%
+    purrr::map_df( ~{
+      res <- aov( value ~ condition + replicate, data = .x )
+      res <- broom::tidy(res)
+      res
+    }, .id = "classification") %>%
+    dplyr::filter(term == "condition")
+
+  # calculate effect size for each junction type
+  effect_sizes <-
+    bootstraps %>%
+    group_by(condition, classification) %>%
+    summarise(mean = mean(value)) %>%
+    tidyr::spread(key = condition, value = mean)
+  names(effect_sizes)[3] <- "knockdown"
+  effect_sizes$deltaProp <- effect_sizes[[3]] - effect_sizes[[2]]
+  effect_sizes$log2Prop <- log2(effect_sizes[[3]]/effect_sizes[[2]])
+
+  full_res <- left_join(anova_res, effect_sizes, by = "classification")
+  return(full_res)
 }
 
