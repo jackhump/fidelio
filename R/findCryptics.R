@@ -27,15 +27,15 @@ findAllJunctions <- function(fidelity.files, refrange) {
     load(eachfile)
 
     # older versions have a weird format
-    if( names(annotated)[1] == "file"){
-      annotated <- annotated$file
-    }
+    #if( names(annotated)[1] == "file"){
+    #  annotated <- annotated$file
+    #}
 
     # assumes that multiple samples are contained in the same rdata file
     # if only 1 sample present?
-    if(all(names(annotated) %in% c("ID", "counts", "all"))){
-          annotated <- list(file = annotated)
-    }
+    #if(all(names(annotated) %in% c("ID", "counts", "all"))){
+    #      annotated <- list(file = annotated)
+    #}
     n.samples <- length(annotated)
 
     for(i in 1:n.samples) {
